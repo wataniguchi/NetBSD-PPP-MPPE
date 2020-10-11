@@ -38,11 +38,6 @@
 #include <sys/sha1.h>
 #include "arc4.h"
 
-#if __NetBSD_Version__ < 299001600
-/* MPPE definitions were included into the kernel source */
-#include "ppp-comp-local.h"
-#endif
-
 int mppe_in_use;
 #define MOD_INC_USE_COUNT	mppe_in_use++
 #define MOD_DEC_USE_COUNT	mppe_in_use--
