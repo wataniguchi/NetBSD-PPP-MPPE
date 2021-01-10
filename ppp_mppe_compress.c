@@ -521,7 +521,7 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
     ppp_mppe_state *state = (ppp_mppe_state *) arg;
     unsigned ccount;
     int flushed;
-    int sanity = 0, isize;
+    int sanity = 0, isize, osize = 0;
     unsigned char *ibuf, *obuf;
 
     if (!mp) {
@@ -541,7 +541,7 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 
     ccount = MPPE_CCOUNT(ibuf);
     if (state->debug >= 7)
-	aprint_error("mppe_decompress[%d]: ccount %d\n", state->unit,
+	aprint_verbose("mppe_decompress[%d]: ccount %d\n", state->unit,
 	       ccount);
 
     /* sanity checks -- terminate with extreme prejudice */
@@ -642,10 +642,8 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 	    MGET(m,M_DONTWAIT, MT_DATA);
 	    if (m == NULL) {
 		m_freem(mfirst);
-#ifdef DEBUG
-		aprint_error("ppp%d/mppe: unable to allocate mbuf to decrypt packet\n",
+		aprint_verbose("ppp%d/mppe: unable to allocate mbuf to decrypt packet\n",
 		    state->unit);
-#endif
 		return DECOMP_ERROR;
 	    }
 	    m->m_len = 0;
@@ -680,12 +678,13 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
     isize -= PPP_HDRLEN + MPPE_OVHD;	/* -6 */
 					/* net osize: isize-4 */
 
-#ifdef notyet
     /*
      * Decrypt the first byte in order to check if it is
      * a compressed or uncompressed protocol field.
      */
     arc4_decrypt(state->arcfour_context, obuf, ibuf, 1);
+    (*mret)->m_len++;
+    osize++;
 
     /*
      * Do PFC decompression.
@@ -696,8 +695,9 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 	obuf[1] = obuf[0];
 	obuf[0] = 0;
 	obuf++;
+	(*mret)->m_len++;
+	osize++;
     }
-#endif
 
     /* And finally, decrypt the rest of the packet. */
 	/* March down input and output mbuf chains, decoding with RC4 */
@@ -705,11 +705,11 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 	    struct mbuf *mi = mp;	/* mbuf in */
 	    struct mbuf *mo = *mret;	/* mbuf out */
 	    int maxi, maxo;
-	    maxi = mi->m_len-6;	/* adjust for PPP_HDRLEN and MPPE_OVERHEAD */
+	    maxi = mi->m_len-7;	/* adjust for PPP_HDRLEN, MPPE_OVERHEAD, and the first byte already decrypted */
 	    maxo = M_TRAILINGSPACE(mo);
 	    while (mi) {
 		if (maxi < maxo) {
-		    arc4_encrypt(state->arcfour_context,
+		    arc4_decrypt(state->arcfour_context,
 			mtod(mo,unsigned char *)+mo->m_len,
 			mtod(mi,unsigned char *)+mi->m_len-maxi,
 			maxi);
@@ -718,24 +718,28 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 		    mi = mi->m_next;
 		    if (mi) {
 			maxi = mi->m_len;
+		    } else {
+			osize += mo->m_len;
 		    }
 		} else if (maxi > maxo) {
-		    arc4_encrypt(state->arcfour_context,
+		    arc4_decrypt(state->arcfour_context,
 			mtod(mo,unsigned char *)+mo->m_len,
 			mtod(mi,unsigned char *)+mi->m_len-maxi,
 			maxo);
 		    mo->m_len += maxo;
+		    osize += mo->m_len;
 		    maxi -= maxo;
 		    mo = mo->m_next;
 		    if (mo) {
 			maxo = M_TRAILINGSPACE(mo);
 		    }
 		} else {
-		    arc4_encrypt(state->arcfour_context,
+		    arc4_decrypt(state->arcfour_context,
 			mtod(mo,unsigned char *)+mo->m_len,
 			mtod(mi,unsigned char *)+mi->m_len-maxi,
 			maxi);
 		    mo->m_len += maxi;
+		    osize += mo->m_len;
 		    mi = mi->m_next;
 		    mo = mo->m_next;
 		    if (mi) {
@@ -745,7 +749,7 @@ mppe_decompress(void *arg, struct mbuf *mp, struct mbuf **mret)
 		}
 	    }
 	}
-    state->stats.unc_bytes += (*mret)->m_len;
+    state->stats.unc_bytes += osize;
     state->stats.unc_packets++;
     state->stats.comp_bytes += isize;
     state->stats.comp_packets++;

@@ -3,3 +3,10 @@
 *~
 *.swp
 .DS_Store
+*.o
+mppe.kmod*
+*/*
+aarch64
+arm
+evbarm
+machine
